@@ -6,19 +6,53 @@ async function loadPostHavenFeed() {
     const feedContainer = document.getElementById('post-haven-feed');
     
     try {
-        // Using a CORS proxy for RSS feeds (you may need to adjust based on your setup)
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(POST_HAVEN_FEED_URL)}`;
+        // Try multiple CORS proxies as fallback
+        const corsProxies = [
+            url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+            url => `https://cors-anywhere.herokuapp.com/${url}`
+        ];
         
-        const response = await fetch(proxyUrl);
-        const data = await response.json();
+        let response;
+        let data;
+        let feedContent;
         
-        if (!response.ok) {
-            throw new Error('Failed to fetch feed');
+        // Try each proxy until one works
+        for (const proxyFunc of corsProxies) {
+            try {
+                const proxyUrl = proxyFunc(POST_HAVEN_FEED_URL);
+                console.log('Trying proxy:', proxyUrl);
+                response = await fetch(proxyUrl);
+                
+                if (response.ok) {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const responseData = await response.json();
+                        // Handle different proxy response formats
+                        feedContent = responseData.contents || responseData;
+                    } else {
+                        // If response is XML/text, use it directly
+                        feedContent = await response.text();
+                    }
+                    
+                    // Verify we got valid XML
+                    if (feedContent && (feedContent.includes('<entry') || feedContent.includes('<item'))) {
+                        break;
+                    }
+                }
+            } catch (err) {
+                console.log('Proxy failed:', err);
+                continue;
+            }
+        }
+        
+        if (!feedContent) {
+            throw new Error('All CORS proxies failed');
         }
         
         // Parse the Atom feed
         const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(data.contents, 'text/xml');
+        const xmlDoc = parser.parseFromString(feedContent, 'text/xml');
         
         // Get all entries from the feed (Atom uses 'entry' instead of 'item')
         let items = xmlDoc.querySelectorAll('entry');
@@ -177,6 +211,6 @@ async function loadPostHavenFeedDirect() {
 
 // Load feed when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    // Try direct fetch first, fall back to proxy if needed
-    loadPostHavenFeedDirect();
+    // Skip direct fetch and use proxy immediately since most feeds block CORS
+    loadPostHavenFeed();
 });
